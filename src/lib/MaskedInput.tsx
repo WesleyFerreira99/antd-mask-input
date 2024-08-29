@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useMemo } from 'react';
+import { useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { InputRef } from 'antd';
 import Input, { InputProps } from 'antd/lib/input';
 import IMask from 'imask';
@@ -27,43 +27,41 @@ export const MaskedInput = React.forwardRef<InputRef, MaskedInputProps>(
       ...antdProps
     } = props;
 
-    const innerRef = React.useRef<HTMLInputElement | null>(null);
+    const innerRef = useRef<HTMLInputElement | null>(null);
 
     const maskOptions = useMemo(() => {
       return {
         mask,
         definitions: {
           '0': /[0-9]/,
-          // @ts-ignore
-          ..._maskOptions?.definitions,
+          ...(typeof _maskOptions?.definitions === 'object' ? _maskOptions.definitions : {}),
           ...definitions,
         },
         lazy: false, // make placeholder always visible
-        ..._maskOptions,
-      } as IMaskOptions;
-    }, [mask]);
+        ...(_maskOptions || {}),
+      } as IMask.AnyMaskedOptions;
+    }, [mask, _maskOptions, definitions]);
 
     const placeholder = useMemo(() => {
-      return IMask.createPipe({ ...maskOptions, lazy: false } as any)('');
+      return IMask.createPipe({ ...maskOptions, lazy: false })( '');
     }, [maskOptions]);
 
-    const imask = React.useRef<IMask.InputMask<any> | null>(null);
+    const imask = useRef<IMask.InputMask<any> | null>(null);
 
-    const propValue =
-      (typeof _value === 'string' ? _value : defaultValue) || '';
+    const propValue = _value ?? defaultValue ?? '';
+    const lastValue = useRef(propValue);
 
-    const lastValue = React.useRef(propValue);
+    const [value, setValue] = useState(propValue);
 
-    const [value, setValue] = React.useState(propValue);
-
-    const _onEvent = React.useCallback((ev: any, execOnChangeCallback = false) => {
+    const _onEvent = useCallback((ev: React.ChangeEvent<HTMLInputElement> | React.FocusEvent<HTMLInputElement>, execOnChangeCallback = false) => {
       const masked = imask.current;
       if (!masked) return;
 
-      if (ev.target) {
-        if (ev.target.value !== masked.value) {
-          masked.value = ev.target.value;
-          ev.target.value = masked.value;
+      const target = ev.target as HTMLInputElement;
+      if (target) {
+        if (target.value !== masked.value) {
+          masked.value = target.value;
+          target.value = masked.value;
           lastValue.current = masked.value;
         }
       }
@@ -77,33 +75,32 @@ export const MaskedInput = React.forwardRef<InputRef, MaskedInputProps>(
       setValue(lastValue.current);
 
       if (execOnChangeCallback) {
-        props.onChange?.(ev);
+        props.onChange?.(ev as any);
       }
-    }, []);
+    }, [props.onChange]);
 
-    const _onAccept = React.useCallback((ev: any) => {
+    const _onAccept = useCallback((ev: any) => {
       if (!ev?.target) return;
 
       const input = innerRef.current;
       const masked = imask.current;
       if (!input || !masked) return;
 
-      ev.target.value = masked.value;
       input.value = masked.value;
       lastValue.current = masked.value;
 
       _onEvent(ev, true);
-    }, []);
+    }, [_onEvent]);
 
     function updateMaskRef() {
       const input = innerRef.current;
 
       if (imask.current) {
-        imask.current.updateOptions(maskOptions as any);
+        imask.current.updateOptions(maskOptions);
       }
 
       if (!imask.current && input) {
-        imask.current = IMask<any>(input, maskOptions);
+        imask.current = IMask(input, maskOptions);
         imask.current.on('accept', _onAccept);
       }
 
@@ -119,66 +116,64 @@ export const MaskedInput = React.forwardRef<InputRef, MaskedInputProps>(
       const masked = imask.current;
       if (!(input && masked)) return;
       masked.value = value;
-      // updating value with the masked
-      //   version (imask.value has a setter that triggers masking)
       input.value = masked.value;
       lastValue.current = masked.value;
     }
 
-    React.useEffect(() => {
+    useEffect(() => {
       updateMaskRef();
 
       return () => {
         imask.current?.destroy();
         imask.current = null;
       };
-    }, [mask]);
+    }, [maskOptions, _onAccept]);
 
-    React.useEffect(() => {
+    useEffect(() => {
       updateValue(propValue);
     }, [propValue]);
 
-    const eventHandlers = React.useMemo(() => {
+    const eventHandlers = useMemo(() => {
       return {
-        onBlur(ev: any) {
+        onBlur(ev: React.FocusEvent<HTMLInputElement>) {
           _onEvent(ev);
           props.onBlur?.(ev);
         },
 
         onPaste(ev: React.ClipboardEvent<HTMLInputElement>) {
-          lastValue.current = ev.clipboardData?.getData('text');
+          lastValue.current = ev.clipboardData?.getData('text') || '';
 
           if (ev.target) {
-            // @ts-ignore
-            ev.target.value = lastValue.current;
+            const target = ev.target as HTMLInputElement;
+            target.value = lastValue.current;
           }
 
-          _onEvent(ev, true);
+          _onEvent(ev as any, true);
           props.onPaste?.(ev);
         },
 
-        onFocus(ev: any) {
+        onFocus(ev: React.FocusEvent<HTMLInputElement>) {
           _onEvent(ev);
           props.onFocus?.(ev);
         },
 
-        [KEY_PRESS_EVENT]: (ev: any) => {
-          _onEvent(ev, true);
+        [KEY_PRESS_EVENT]: (ev: React.KeyboardEvent<HTMLInputElement>) => {
+          _onEvent(ev as any, true);
           props[KEY_PRESS_EVENT]?.(ev);
         },
       };
-    }, []);
+    }, [_onEvent]);
 
     return (
       <Input
         placeholder={placeholder}
         {...antdProps}
         {...eventHandlers}
-        onChange={(ev) => _onEvent(ev, true)}
+        onChange={(ev) => _onEvent(ev as any, true)}
         value={value}
-        ref={function handleInputMask(ref) {
+        ref={(ref) => {
           if (antdRef) {
-            if (typeof antdRef == 'function') {
+            if (typeof antdRef === 'function') {
               antdRef(ref);
             } else {
               antdRef.current = ref;
